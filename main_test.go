@@ -21,18 +21,18 @@ func TestLocateBinaries(t *testing.T) {
 func TestPatchBinary(t *testing.T) {
 	require.NoError(t, command.New("cp", testBinary, testBinary+".sut").RunSilentSuccess())
 	defer os.Remove(testBinary + ".sut")
-	require.NoError(t, patchBinary(testBinary+".sut", 3599627, "HolaAmigo"))
+	require.NoError(t, NewSnapper("/tmp").patchBinary(testBinary+".sut", 3599627, "HolaAmigo"))
 }
 
 func TestFindStringOffset(t *testing.T) {
-	offset, err := findStringOffset(
+	offset, err := NewSnapper("/tmp").findStringOffset(
 		"<iframe src=\"https://giphy.com/embed/11tTNkNy1SdXGg",
 		testBinary,
 	)
 	require.NoError(t, err)
 	require.Equal(t, int64(3599627), offset)
 
-	offset, err = findStringOffset(
+	offset, err = NewSnapper("/").findStringOffset(
 		"<oframe src=\"https://giphy.com/embed/11tTNkNy1SdXGg",
 		testBinary,
 	)
